@@ -5,7 +5,7 @@ export const Route = createFileRoute('/')({
   component: LerncoachingApp,
 })
 
-// ── Data ────────────────────────────────────────────────────────────────────
+// ── Data ───────────────────────────────────────────────────────────────
 
 const PHASES = [
   {
@@ -79,7 +79,7 @@ const PHASES = [
   },
 ]
 
-// ── Timer hook ───────────────────────────────────────────────────────────────
+// ── Timer hook ───────────────────────────────────────────────────────────
 
 function useTimer() {
   const [elapsed, setElapsed] = useState(0)
@@ -110,7 +110,7 @@ function useTimer() {
   return { display: `${mm}:${ss}`, running, start, reset, elapsed }
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Main component ────────────────────���──────────────────────────────────
 
 function LerncoachingApp() {
   const [students, setStudents] = useState<string[]>([])
@@ -157,6 +157,43 @@ function LerncoachingApp() {
 
   function updateNote(val: string) {
     setNotes(n => ({ ...n, [noteKey]: val }))
+  }
+
+  const sanitizeFilename = (value: string) => {
+    const cleaned = value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+
+    return cleaned || 'kind'
+  }
+
+  const handleDownloadStudentNotes = () => {
+    if (!activeStudent) return
+
+    const lines = PHASES.map((phaseItem) => {
+      const phaseNote = notes[`${activeStudent}__${phaseItem.id}`]?.trim() || 'Keine Notizen vorhanden.'
+      return `## ${phaseItem.label}: ${phaseItem.title}\n${phaseNote}\n`
+    }).join('\n---\n\n')
+
+    const content = [
+      `Lerncoaching – ${activeStudent}`,
+      `Datum: ${new Date().toLocaleDateString('de-DE')}`,
+      `Gesprächsdauer: ${timer.display}`,
+      '',
+      lines,
+    ].join('\n')
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `lerncoaching_${sanitizeFilename(activeStudent)}_${new Date().toISOString().slice(0, 10)}.txt`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
   }
 
   const highlightCount = [...highlighted].filter(k => k.startsWith(phase.id)).length
@@ -396,6 +433,14 @@ function LerncoachingApp() {
                     <span>{donePhases.size} / {PHASES.length}</span>
                   </div>
                 </div>
+
+                <button
+                  className="btn-sm primary"
+                  onClick={handleDownloadStudentNotes}
+                  style={{ width: '100%', marginTop: '1rem' }}
+                >
+                  Speichern
+                </button>
               </div>
             </div>
           )}
