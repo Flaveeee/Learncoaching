@@ -270,6 +270,24 @@ body {
   background: rgba(196, 90, 58, 0.08);
 }
 
+/* ── Import / Export ── */
+.import-export {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.import-export .btn-sm {
+  flex: 1;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+.btn-sm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── Progress indicator ── */
 .phase-progress {
   display: flex;

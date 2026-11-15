@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react'
+import { createStudentDocx, readStudentDocx } from '@/lib/word-doc'
 
 export const Route = createFileRoute('/')({
   component: LerncoachingApp,
@@ -196,6 +197,56 @@ function LerncoachingApp() {
     URL.revokeObjectURL(url)
   }
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleExport = async () => {
+    if (!activeStudent) return
+    const notesFor: Record<string, string> = {}
+    const marked: Record<string, number[]> = {}
+    for (const p of PHASES) {
+      notesFor[p.id] = notes[`${activeStudent}__${p.id}`] ?? ''
+      marked[p.id] = p.questions.map((_, i) => i).filter(i => highlighted.has(`${p.id}__${i}`))
+    }
+    const blob = await createStudentDocx(PHASES, { student: activeStudent, duration: timer.display, notes: notesFor, marked })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `lerncoaching_${sanitizeFilename(activeStudent)}_${new Date().toISOString().slice(0, 10)}.docx`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  const handleImport = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const data = await readStudentDocx(file)
+      const name = data.student
+      setStudents(s => (s.includes(name) ? s : [...s, name]))
+      setNotes(n => {
+        const next = { ...n }
+        for (const p of PHASES) next[`${name}__${p.id}`] = data.notes[p.id] ?? ''
+        return next
+      })
+      setHighlighted(h => {
+        const next = new Set(h)
+        for (const p of PHASES) {
+          p.questions.forEach((_, i) => next.delete(`${p.id}__${i}`))
+          for (const i of data.marked[p.id] ?? []) next.add(`${p.id}__${i}`)
+        }
+        return next
+      })
+      setActiveStudent(name)
+      setPhaseIdx(0)
+      setAnimKey(k => k + 1)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Die Word-Datei konnte nicht importiert werden.')
+    }
+  }
+
   const highlightCount = [...highlighted].filter(k => k.startsWith(phase.id)).length
 
   return (
@@ -257,6 +308,26 @@ function LerncoachingApp() {
                   onKeyDown={e => e.key === 'Enter' && addStudent()}
                 />
                 <button className="btn-icon" onClick={addStudent} title="Hinzufügen">+</button>
+              </div>
+              <div className="import-export">
+                <button className="btn-sm" onClick={() => fileInputRef.current?.click()} title="Daten aus Datei laden">
+                  Importieren
+                </button>
+                <button
+                  className="btn-sm"
+                  onClick={handleExport}
+                  disabled={!activeStudent}
+                  title="Ausgewählte:n Schüler:in als Word-Datei sichern"
+                >
+                  Exportieren
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  onChange={handleImport}
+                  style={{ display: 'none' }}
+                />
               </div>
             </div>
           </div>
@@ -459,6 +530,7 @@ function LerncoachingApp() {
               <li>Starte den Timer, wenn das Gespräch beginnt.</li>
               <li>Klicke auf eine Frage, um sie hervorzuheben – so behältst du den Überblick.</li>
               <li>Notiere deine Beobachtungen in der rechten Spalte – pro Phase und Schüler:in separat.</li>
+              <li>Mit «Exportieren» speicherst du die ausgewählte Schüler:in mit allen Fragen, Markierungen und Notizen als Word-Datei; mit «Importieren» lädst du diese Word-Datei wieder.</li>
               <li>Navigiere mit «Zurück» und «Weiter» durch die fünf Phasen.</li>
             </ul>
             <p>Die Phasen sind: Einstieg → Analyse → Ziele → Strategien → Reflexion.</p>
