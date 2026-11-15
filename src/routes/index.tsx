@@ -110,6 +110,45 @@ function useTimer() {
   return { display: `${mm}:${ss}`, running, start, reset, elapsed }
 }
 
+// ── Persistence (localStorage only, nothing leaves the browser) ─────────
+
+const STORAGE_KEY = 'lerncoaching-data-v1'
+
+type PersistedData = {
+  version: 1
+  students: string[]
+  activeStudent: string | null
+  phaseIdx: number
+  donePhases: number[]
+  highlighted: string[]
+  notes: Record<string, string>
+}
+
+function parsePersistedData(raw: unknown): PersistedData | null {
+  if (!raw || typeof raw !== 'object') return null
+  const d = raw as Record<string, unknown>
+  if (!Array.isArray(d.students) || !d.students.every(s => typeof s === 'string')) return null
+  const notes: Record<string, string> = {}
+  if (d.notes && typeof d.notes === 'object') {
+    for (const [k, v] of Object.entries(d.notes as Record<string, unknown>)) {
+      if (typeof v === 'string') notes[k] = v
+    }
+  }
+  const students = d.students as string[]
+  const phaseIdx = typeof d.phaseIdx === 'number' && d.phaseIdx >= 0 && d.phaseIdx < PHASES.length ? Math.floor(d.phaseIdx) : 0
+  return {
+    version: 1,
+    students,
+    activeStudent: typeof d.activeStudent === 'string' && students.includes(d.activeStudent) ? d.activeStudent : null,
+    phaseIdx,
+    donePhases: Array.isArray(d.donePhases)
+      ? d.donePhases.filter((n): n is number => typeof n === 'number' && n >= 0 && n < PHASES.length)
+      : [],
+    highlighted: Array.isArray(d.highlighted) ? d.highlighted.filter((h): h is string => typeof h === 'string') : [],
+    notes,
+  }
+}
+
 // ── Main component ────────────────────���──────────────────────────────────
 
 function LerncoachingApp() {
@@ -122,7 +161,90 @@ function LerncoachingApp() {
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [showHelp, setShowHelp] = useState(false)
   const [animKey, setAnimKey] = useState(0)
+  const [loaded, setLoaded] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
   const timer = useTimer()
+
+  function applyData(data: PersistedData) {
+    setStudents(data.students)
+    setActiveStudent(data.activeStudent)
+    setPhaseIdx(data.phaseIdx)
+    setDonePhases(new Set(data.donePhases))
+    setHighlighted(new Set(data.highlighted))
+    setNotes(data.notes)
+    setAnimKey(k => k + 1)
+  }
+
+  // Load saved data once on mount (client only)
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        const data = parsePersistedData(JSON.parse(raw))
+        if (data) applyData(data)
+      }
+    } catch {
+      // ignore corrupt or inaccessible storage
+    }
+    setLoaded(true)
+  }, [])
+
+  const currentData = useCallback((): PersistedData => ({
+    version: 1,
+    students,
+    activeStudent,
+    phaseIdx,
+    donePhases: [...donePhases],
+    highlighted: [...highlighted],
+    notes,
+  }), [students, activeStudent, phaseIdx, donePhases, highlighted, notes])
+
+  // Save on every change
+  useEffect(() => {
+    if (!loaded) return
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(currentData()))
+    } catch {
+      // storage full or unavailable
+    }
+  }, [loaded, currentData])
+
+  function handleExport() {
+    const blob = new Blob([JSON.stringify(currentData(), null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    const d = new Date()
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    link.download = `lerncoaching-backup-${date}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      let data: PersistedData | null = null
+      try {
+        data = parsePersistedData(JSON.parse(String(reader.result)))
+      } catch {
+        data = null
+      }
+      if (!data) {
+        window.alert('Die Datei konnte nicht gelesen werden. Bitte wähle eine gültige Lerncoaching-Backup-Datei (JSON).')
+        return
+      }
+      if (!window.confirm('Achtung: Alle aktuellen Daten werden durch die Daten aus der Datei ersetzt. Fortfahren?')) return
+      applyData(data)
+    }
+    reader.onerror = () => window.alert('Die Datei konnte nicht gelesen werden.')
+    reader.readAsText(file)
+  }
 
   const phase = PHASES[phaseIdx]
   const noteKey = `${activeStudent ?? '__none'}__${phase.id}`
@@ -137,7 +259,15 @@ function LerncoachingApp() {
   }
 
   function removeStudent(name: string) {
+    if (!window.confirm(`Möchtest du ${name} und alle zugehörigen Notizen wirklich löschen? Dies kann nicht rückgängig gemacht werden.`)) return
     setStudents(s => s.filter(n => n !== name))
+    setNotes(n => {
+      const next: Record<string, string> = {}
+      for (const [k, v] of Object.entries(n)) {
+        if (!k.startsWith(`${name}__`)) next[k] = v
+      }
+      return next
+    })
     if (activeStudent === name) setActiveStudent(null)
   }
 
@@ -209,6 +339,15 @@ function LerncoachingApp() {
           {activeStudent && (
             <span className="tag">{activeStudent}</span>
           )}
+          <button className="btn-sm" onClick={handleExport} title="Alle Daten als JSON-Datei herunterladen">Export</button>
+          <button className="btn-sm" onClick={() => importInputRef.current?.click()} title="Daten aus JSON-Datei wiederherstellen">Import</button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={handleImportFile}
+          />
           <button className="help-btn" onClick={() => setShowHelp(true)} title="Hilfe">?</button>
         </div>
       </header>
@@ -237,8 +376,9 @@ function LerncoachingApp() {
                       <button
                         className="remove-btn"
                         onClick={e => { e.stopPropagation(); removeStudent(name) }}
-                        title="Entfernen"
-                      >×</button>
+                        title="Schüler:in und Notizen löschen"
+                        style={{ fontSize: '0.75rem' }}
+                      >Löschen</button>
                     </div>
                   ))}
                 </div>
@@ -462,6 +602,7 @@ function LerncoachingApp() {
               <li>Navigiere mit «Zurück» und «Weiter» durch die fünf Phasen.</li>
             </ul>
             <p>Die Phasen sind: Einstieg → Analyse → Ziele → Strategien → Reflexion.</p>
+            <p>Alle Daten werden automatisch nur lokal in deinem Browser gespeichert. Mit «Export» sicherst du sie als Datei, mit «Import» stellst du sie wieder her.</p>
             <button className="help-close" onClick={() => setShowHelp(false)}>Verstanden</button>
           </div>
         </div>
